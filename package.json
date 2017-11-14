@@ -1,6 +1,6 @@
 {
   "name": "puppeteer",
-  "version": "0.13.0-alpha",
+  "version": "0.13.0",
   "description": "A high-level API to control headless Chrome over the DevTools Protocol",
   "main": "index.js",
   "repository": "github:GoogleChrome/puppeteer",
@@ -34,7 +34,7 @@
     "ws": "^3.0.0"
   },
   "puppeteer": {
-    "chromium_revision": "511134"
+    "chromium_revision": "515411"
   },
   "devDependencies": {
     "@types/debug": "0.0.30",

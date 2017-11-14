@@ -1,6 +1,6 @@
 ##### Released API: [v0.12.0](https://github.com/GoogleChrome/puppeteer/blob/v0.12.0/docs/api.md) | [v0.11.0](https://github.com/GoogleChrome/puppeteer/blob/v0.11.0/docs/api.md) | [v0.10.2](https://github.com/GoogleChrome/puppeteer/blob/v0.10.2/docs/api.md) | [v0.10.1](https://github.com/GoogleChrome/puppeteer/blob/v0.10.1/docs/api.md) | [v0.10.0](https://github.com/GoogleChrome/puppeteer/blob/v0.10.0/docs/api.md) | [v0.9.0](https://github.com/GoogleChrome/puppeteer/blob/v0.9.0/docs/api.md)
 
-# Puppeteer API v<!-- GEN:version -->0.13.0-alpha<!-- GEN:stop-->
+# Puppeteer API v<!-- GEN:version -->0.13.0<!-- GEN:stop-->
 
 ##### Table of Contents
 
@@ -13,6 +13,7 @@
   * [puppeteer.executablePath()](#puppeteerexecutablepath)
   * [puppeteer.launch([options])](#puppeteerlaunchoptions)
 - [class: Browser](#class-browser)
+  * [event: 'disconnected'](#event-disconnected)
   * [event: 'targetchanged'](#event-targetchanged)
   * [event: 'targetcreated'](#event-targetcreated)
   * [event: 'targetdestroyed'](#event-targetdestroyed)
@@ -44,6 +45,7 @@
   * [page.addScriptTag(options)](#pageaddscripttagoptions)
   * [page.addStyleTag(options)](#pageaddstyletagoptions)
   * [page.authenticate(credentials)](#pageauthenticatecredentials)
+  * [page.bringToFront()](#pagebringtofront)
   * [page.click(selector[, options])](#pageclickselector-options)
   * [page.close()](#pageclose)
   * [page.content()](#pagecontent)
@@ -70,7 +72,7 @@
   * [page.reload(options)](#pagereloadoptions)
   * [page.screenshot([options])](#pagescreenshotoptions)
   * [page.select(selector, ...values)](#pageselectselector-values)
-  * [page.setContent(html, options)](#pagesetcontenthtml-options)
+  * [page.setContent(html)](#pagesetcontenthtml)
   * [page.setCookie(...cookies)](#pagesetcookiecookies)
   * [page.setExtraHTTPHeaders(headers)](#pagesetextrahttpheadersheaders)
   * [page.setJavaScriptEnabled(enabled)](#pagesetjavascriptenabledenabled)
@@ -291,6 +293,10 @@ puppeteer.launch().then(async browser => {
   await browser2.close();
 });
 ```
+#### event: 'disconnected'
+Emitted when puppeteer gets disconnected from the browser instance. This might happen because one of the following:
+- browser closed or crashed
+- `browser.disconnect` method was called
 
 #### event: 'targetchanged'
 - <[Target]>
@@ -492,7 +498,7 @@ Shortcut for [page.mainFrame().$eval(selector, pageFunction)](#frameevalselector
   - `url` <[string]> Url of a script to be added.
   - `path` <[string]> Path to the JavaScript file to be injected into frame. If `path` is a relative path, then it is resolved relative to [current working directory](https://nodejs.org/api/process.html#process_process_cwd).
   - `content` <[string]> Raw JavaScript content to be injected into frame.
-- returns: <[Promise]> which resolves when the script's onload fires or when the script content was injected into frame.
+- returns: <[Promise]<[ElementHandle]>> which resolves to the added tag when the script's onload fires or when the script content was injected into frame.
 
 Adds a `<script>` tag into the page with the desired url or content.
 
@@ -503,7 +509,7 @@ Shortcut for [page.mainFrame().addScriptTag(options)](#frameaddscripttagoptions)
   - `url` <[string]> Url of the `<link>` tag.
   - `path` <[string]> Path to the CSS file to be injected into frame. If `path` is a relative path, then it is resolved relative to [current working directory](https://nodejs.org/api/process.html#process_process_cwd).
   - `content` <[string]> Raw CSS content to be injected into frame.
-- returns: <[Promise]> which resolves when the stylesheet's onload fires or when the CSS content was injected into frame.
+- returns: <[Promise]<[ElementHandle]>> which resolves to the added tag when the stylesheet's onload fires or when the CSS content was injected into frame.
 
 Adds a `<link rel="stylesheet">` tag into the page with the desired url or a `<style type="text/css">` tag with the content.
 
@@ -518,6 +524,12 @@ Shortcut for [page.mainFrame().addStyleTag(options)](#frameaddstyletagoptions).
 Provide credentials for [http authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication).
 
 To disable authentication, pass `null`.
+
+#### page.bringToFront()
+
+- returns: <[Promise]>
+
+Brings page to front (activates tab).
 
 #### page.click(selector[, options])
 - `selector` <[string]> A [selector] to search for element to click. If there are multiple elements satisfying the selector, the first will be clicked.
@@ -886,7 +898,7 @@ The `format` options are:
 - `prototypeHandle` <[JSHandle]> A handle to the object prototype.
 - returns: <[Promise]<[JSHandle]>> Promise which resolves to a handle to an array of objects with this prototype.
 
-The method iterates javascript heap and finds all the objects with the given prototype.
+The method iterates JavaScript heap and finds all the objects with the given prototype.
 
 ```js
 // Create a Map object
@@ -942,16 +954,9 @@ page.select('select#colors', 'red', 'green', 'blue'); // multiple selections
 
 Shortcut for [page.mainFrame.select()](#frameselectselector-values)
 
-#### page.setContent(html, options)
+#### page.setContent(html)
 - `html` <[string]> HTML markup to assign to the page.
-- `options` <[Object]> Navigation parameters which might have the following properties:
-  - `timeout` <[number]> Maximum navigation time in milliseconds, defaults to 30 seconds, pass `0` to disable timeout.
-  - `waitUntil` <[string]|[Array]<[string]>> When to consider setting content complete, defaults to `load`. Given an array of event strings, setting content is considered to be successful after all events have been fired. Events can be either:
-    - `load` - consider setting content to be finished when the `load` event is fired.
-    - `domcontentloaded` - consider setting content to be finished when the `DOMContentLoaded` event is fired.
-    - `networkidle0` - consider setting content to be finished when there are no more than 0 network connections for at least `500` ms.
-    - `networkidle2` - consider setting content to be finished when there are no more than 2 network connections for at least `500` ms.
-- returns: <[Promise]> Promise which resolves when content is set and all events are triggered.
+- returns: <[Promise]>
 
 #### page.setCookie(...cookies)
 - `...cookies` <...[Object]>
@@ -1180,6 +1185,8 @@ await page.keyboard.down('Shift');
 await page.keyboard.press('KeyA');
 await page.keyboard.up('Shift');
 ```
+
+> **NOTE** On MacOS, keyboard shortcuts like `⌘ A` -> Select All do not work. See [#1313](https://github.com/GoogleChrome/puppeteer/issues/1313)
 
 #### keyboard.down(key[, options])
 - `key` <[string]> Name of key to press, such as `ArrowLeft`. See [USKeyboardLayout] for a list of all key names.
@@ -1442,7 +1449,7 @@ const html = await frame.$eval('.main-container', e => e.outerHTML);
   - `url` <[string]> Url of a script to be added.
   - `path` <[string]> Path to the JavaScript file to be injected into frame. If `path` is a relative path, then it is resolved relative to [current working directory](https://nodejs.org/api/process.html#process_process_cwd).
   - `content` <[string]> Raw JavaScript content to be injected into frame.
-- returns: <[Promise]> which resolves when the script's onload fires or when the script content was injected into frame.
+- returns: <[Promise]<[ElementHandle]>> which resolves to the added tag when the script's onload fires or when the script content was injected into frame.
 
 Adds a `<script>` tag into the page with the desired url or content.
 
@@ -1451,7 +1458,7 @@ Adds a `<script>` tag into the page with the desired url or content.
   - `url` <[string]> Url of the `<link>` tag.
   - `path` <[string]> Path to the CSS file to be injected into frame. If `path` is a relative path, then it is resolved relative to [current working directory](https://nodejs.org/api/process.html#process_process_cwd).
   - `content` <[string]> Raw CSS content to be injected into frame.
-- returns: <[Promise]> which resolves when the stylesheet's onload fires or when the CSS content was injected into frame.
+- returns: <[Promise]<[ElementHandle]>> which resolves to the added tag when the stylesheet's onload fires or when the CSS content was injected into frame.
 
 Adds a `<link rel="stylesheet">` tag into the page with the desired url or a `<style type="text/css">` tag with the content.
 
@@ -1510,7 +1517,7 @@ If the name is empty, returns the id attribute instead.
 #### frame.select(selector, ...values)
 - `selector` <[string]> A [selector] to query frame for
 - `...values` <...[string]> Values of options to select. If the `<select>` has the `multiple` attribute, all values are considered, otherwise only the first one is taken into account.
-- returns: <[Promise]<[string]>>
+- returns: <[Promise]<[Array]<[string]>>> Returns an array of option values that have been successfully selected.
 
 Triggers a `change` and `input` event once all the provided options have been selected.
 If there's no `<select>` element matching `selector`, the method throws an error.
@@ -1659,7 +1666,7 @@ await resultHandle.dispose();
 - `prototypeHandle` <[JSHandle]> A handle to the object prototype.
 - returns: <[JSHandle]> A handle to an array of objects with this prototype
 
-The method iterates javascript heap and finds all the objects with the given prototype.
+The method iterates JavaScript heap and finds all the objects with the given prototype.
 
 ```js
 // Create a Map object
@@ -1676,7 +1683,7 @@ await mapPrototype.dispose();
 
 ### class: JSHandle
 
-JSHandle represents an in-page javascript object. JSHandles can be created with the [page.evaluateHandle](#pageevaluatehandlepagefunction-args) method.
+JSHandle represents an in-page JavaScript object. JSHandles can be created with the [page.evaluateHandle](#pageevaluatehandlepagefunction-args) method.
 
 ```js
 const windowHandle = await page.evaluateHandle(() => window);
@@ -1774,7 +1781,7 @@ The method runs `element.querySelectorAll` within the page. If no elements match
     - width <[number]> the width of the element in pixels.
     - height <[number]> the height of the element in pixels.
 
-This method returns the bounding box of the element (relative to the main frame), or `null` if element is detached from dom.
+This method returns the bounding box of the element (relative to the main frame), or `null` if the element is not visible.
 
 #### elementHandle.click([options])
 - `options` <[Object]>

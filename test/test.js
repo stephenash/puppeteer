@@ -165,6 +165,26 @@ describe('Puppeteer', function() {
       await browser2.close();
       rm(userDataDir);
     }));
+    xit('headless should be able to read cookies written by headful', SX(async function() {
+      const userDataDir = fs.mkdtempSync(path.join(__dirname, 'test-user-data-dir'));
+      const options = Object.assign({userDataDir}, defaultBrowserOptions);
+      // Write a cookie in headful chrome
+      options.headless = false;
+      const headfulBrowser = await puppeteer.launch(options);
+      const headfulPage = await headfulBrowser.newPage();
+      await headfulPage.goto(EMPTY_PAGE);
+      await headfulPage.evaluate(() => document.cookie = 'foo=true; expires=Fri, 31 Dec 9999 23:59:59 GMT');
+      await headfulBrowser.close();
+      // Read the cookie from headless chrome
+      options.headless = true;
+      const headlessBrowser = await puppeteer.launch(options);
+      const headlessPage = await headlessBrowser.newPage();
+      await headlessPage.goto(EMPTY_PAGE);
+      const cookie = await headlessPage.evaluate(() => document.cookie);
+      await headlessBrowser.close();
+      rm(userDataDir);
+      expect(cookie).toBe('foo=true');
+    }));
   });
   describe('Puppeteer.connect', function() {
     it('should be able to connect multiple times to the same browser', SX(async function() {
@@ -232,6 +252,32 @@ describe('Page', function() {
       const version = await browser.version();
       expect(version.length).toBeGreaterThan(0);
       expect(version.startsWith('Headless')).toBe(headless);
+    }));
+  });
+
+  describe('Browser.Events.disconnected', function() {
+    it('should emitted when: browser gets closed, disconnected or underlying websocket gets closed', SX(async function() {
+      const originalBrowser = await puppeteer.launch(defaultBrowserOptions);
+      const browserWSEndpoint = originalBrowser.wsEndpoint();
+      const remoteBrowser1 = await puppeteer.connect({browserWSEndpoint});
+      const remoteBrowser2 = await puppeteer.connect({browserWSEndpoint});
+
+      let disconnectedOriginal = 0;
+      let disconnectedRemote1 = 0;
+      let disconnectedRemote2 = 0;
+      originalBrowser.on('disconnected', () => ++disconnectedOriginal);
+      remoteBrowser1.on('disconnected', () => ++disconnectedRemote1);
+      remoteBrowser2.on('disconnected', () => ++disconnectedRemote2);
+
+      await remoteBrowser2.disconnect();
+      expect(disconnectedOriginal).toBe(0);
+      expect(disconnectedRemote1).toBe(0);
+      expect(disconnectedRemote2).toBe(1);
+
+      await originalBrowser.close();
+      expect(disconnectedOriginal).toBe(1);
+      expect(disconnectedRemote1).toBe(1);
+      expect(disconnectedRemote2).toBe(1);
     }));
   });
 
@@ -706,7 +752,7 @@ describe('Page', function() {
     it('should wait for visible', SX(async function() {
       let divFound = false;
       const waitForSelector = page.waitForSelector('div', {visible: true}).then(() => divFound = true);
-      await page.setContent(`<div style='display: none; visibility: hidden;'></div>`);
+      await page.setContent(`<div style='display: none; visibility: hidden;'>1</div>`);
       expect(divFound).toBe(false);
       await page.evaluate(() => document.querySelector('div').style.removeProperty('display'));
       expect(divFound).toBe(false);
@@ -714,10 +760,23 @@ describe('Page', function() {
       expect(await waitForSelector).toBe(true);
       expect(divFound).toBe(true);
     }));
+    it('should wait for visible recursively', SX(async function() {
+      let divVisible = false;
+      const waitForSelector = page.waitForSelector('div#inner', {visible: true}).then(() => divVisible = true);
+      await page.setContent(`<div style='display: none; visibility: hidden;'><div id="inner">hi</div></div>`);
+      expect(divVisible).toBe(false);
+      await page.evaluate(() => document.querySelector('div').style.removeProperty('display'));
+      expect(divVisible).toBe(false);
+      await page.evaluate(() => document.querySelector('div').style.removeProperty('visibility'));
+      expect(await waitForSelector).toBe(true);
+      expect(divVisible).toBe(true);
+    }));
     it('hidden should wait for visibility: hidden', SX(async function() {
       let divHidden = false;
       await page.setContent(`<div style='display: block;'></div>`);
       const waitForSelector = page.waitForSelector('div', {hidden: true}).then(() => divHidden = true);
+      await page.waitForSelector('div'); // do a round trip
+      expect(divHidden).toBe(false);
       await page.evaluate(() => document.querySelector('div').style.setProperty('visibility', 'hidden'));
       expect(await waitForSelector).toBe(true);
       expect(divHidden).toBe(true);
@@ -726,6 +785,8 @@ describe('Page', function() {
       let divHidden = false;
       await page.setContent(`<div style='display: block;'></div>`);
       const waitForSelector = page.waitForSelector('div', {hidden: true}).then(() => divHidden = true);
+      await page.waitForSelector('div'); // do a round trip
+      expect(divHidden).toBe(false);
       await page.evaluate(() => document.querySelector('div').style.setProperty('display', 'none'));
       expect(await waitForSelector).toBe(true);
       expect(divHidden).toBe(true);
@@ -734,6 +795,7 @@ describe('Page', function() {
       await page.setContent(`<div></div>`);
       let divRemoved = false;
       const waitForSelector = page.waitForSelector('div', {hidden: true}).then(() => divRemoved = true);
+      await page.waitForSelector('div'); // do a round trip
       expect(divRemoved).toBe(false);
       await page.evaluate(() => document.querySelector('div').remove());
       expect(await waitForSelector).toBe(true);
@@ -926,7 +988,7 @@ describe('Page', function() {
     it('should fail when main resources failed to load', SX(async function() {
       let error = null;
       await page.goto('http://localhost:44123/non-existing-url').catch(e => error = e);
-      expect(error.message).toContain('Failed to navigate');
+      expect(error.message).toContain('net::ERR_CONNECTION_REFUSED');
     }));
     it('should fail when exceeding maximum navigation timeout', SX(async function() {
       let hasUnhandledRejection = false;
@@ -1142,6 +1204,30 @@ describe('Page', function() {
       });
       expect(result).toBe(15);
     }));
+    it('should work on frames', SX(async function() {
+      await page.exposeFunction('compute', function(a, b) {
+        return Promise.resolve(a * b);
+      });
+
+      await page.goto(PREFIX + '/frames/nested-frames.html');
+      const frame = page.frames()[1];
+      const result = await frame.evaluate(async function() {
+        return await compute(3, 5);
+      });
+      expect(result).toBe(15);
+    }));
+    it('should work on frames before navigation', SX(async function() {
+      await page.goto(PREFIX + '/frames/nested-frames.html');
+      await page.exposeFunction('compute', function(a, b) {
+        return Promise.resolve(a * b);
+      });
+
+      const frame = page.frames()[1];
+      const result = await frame.evaluate(async function() {
+        return await compute(3, 5);
+      });
+      expect(result).toBe(15);
+    }));
   });
 
   describe('Page.setRequestInterception', function() {
@@ -1223,7 +1309,7 @@ describe('Page', function() {
       let error = null;
       await page.goto(EMPTY_PAGE).catch(e => error = e);
       expect(error).toBeTruthy();
-      expect(error.message).toContain('Failed to navigate');
+      expect(error.message).toContain('net::ERR_FAILED');
     }));
     it('should work with redirects', SX(async function() {
       await page.setRequestInterception(true);
@@ -1301,7 +1387,7 @@ describe('Page', function() {
       });
       let error = null;
       await page.goto('data:text/html,No way!').catch(err => error = err);
-      expect(error.message).toContain('Failed to navigate');
+      expect(error.message).toContain('net::ERR_FAILED');
     }));
     it('should navigate to URL with hash and and fire requests without hash', SX(async function() {
       await page.setRequestInterception(true);
@@ -1618,6 +1704,11 @@ describe('Page', function() {
       const box = await elementHandle.boundingBox();
       expect(box).toEqual({ x: 28, y: 260, width: 264, height: 18 });
     }));
+    it('should return null for invisible elements', SX(async function() {
+      await page.setContent('<div style="display:none">hi</div>');
+      const element = await page.$('div');
+      expect(await element.boundingBox()).toBe(null);
+    }));
   });
 
   describe('ElementHandle.click', function() {
@@ -1647,6 +1738,26 @@ describe('Page', function() {
       let error = null;
       await button.click().catch(err => error = err);
       expect(error.message).toBe('Node is detached from document');
+    }));
+    it('should throw for hidden nodes', SX(async function() {
+      await page.goto(PREFIX + '/input/button.html');
+      const button = await page.$('button');
+      await page.evaluate(button => button.style.display = 'none', button);
+      const error = await button.click().catch(err => err);
+      expect(error.message).toBe('Node is not visible');
+    }));
+    it('should throw for recursively hidden nodes', SX(async function() {
+      await page.goto(PREFIX + '/input/button.html');
+      const button = await page.$('button');
+      await page.evaluate(button => button.parentElement.style.display = 'none', button);
+      const error = await button.click().catch(err => err);
+      expect(error.message).toBe('Node is not visible');
+    }));
+    it('should throw for <br> elements', SX(async function() {
+      await page.setContent('hello<br>goodbye');
+      const br = await page.$('br');
+      const error = await br.click().catch(err => err);
+      expect(error.message).toBe('Node is not visible');
     }));
   });
 
@@ -1684,6 +1795,29 @@ describe('Page', function() {
       const elementHandle = await page.$('div');
       const screenshot = await elementHandle.screenshot();
       expect(screenshot).toBeGolden('screenshot-element-padding-border.png');
+    }));
+    it('should scroll element into view', SX(async function() {
+      await page.setViewport({width: 500, height: 500});
+      await page.setContent(`
+        something above
+        <style>div.above {
+          border: 2px solid blue;
+          background: red;
+          height: 1500px;
+        }
+        div.to-screenshot {
+          border: 2px solid blue;
+          background: green;
+          width: 50px;
+          height: 50px;
+        }
+        </style>
+        <div class="above"></div>
+        <div class="to-screenshot"></div>
+      `);
+      const elementHandle = await page.$('div.to-screenshot');
+      const screenshot = await elementHandle.screenshot();
+      expect(screenshot).toBeGolden('screenshot-element-scrolled-into-view.png');
     }));
     it('should work with a rotated element', SX(async function() {
       await page.setViewport({width: 500, height: 500});
@@ -1750,6 +1884,38 @@ describe('Page', function() {
       await page.click('button');
       expect(await page.evaluate(() => result)).toBe('Clicked');
     }));
+
+    it('should click on checkbox input and toggle', SX(async function() {
+      await page.goto(PREFIX + '/input/checkbox.html');
+      expect(await page.evaluate(() => result.check)).toBe(null);
+      await page.click('input#agree');
+      expect(await page.evaluate(() => result.check)).toBe(true);
+      expect(await page.evaluate(() => result.events)).toEqual([
+        'mouseover',
+        'mouseenter',
+        'mousemove',
+        'mousedown',
+        'mouseup',
+        'click',
+        'change',
+      ]);
+      await page.click('input#agree');
+      expect(await page.evaluate(() => result.check)).toBe(false);
+    }));
+
+    it('should click on checkbox label and toggle', SX(async function() {
+      await page.goto(PREFIX + '/input/checkbox.html');
+      expect(await page.evaluate(() => result.check)).toBe(null);
+      await page.click('label[for="agree"]');
+      expect(await page.evaluate(() => result.check)).toBe(true);
+      expect(await page.evaluate(() => result.events)).toEqual([
+        'click',
+        'change',
+      ]);
+      await page.click('label[for="agree"]');
+      expect(await page.evaluate(() => result.check)).toBe(false);
+    }));
+
     it('should fail to click a missing button', SX(async function() {
       await page.goto(PREFIX + '/input/button.html');
       let error = null;
@@ -2207,17 +2373,6 @@ describe('Page', function() {
       const result = await page.content();
       expect(result).toBe(`${doctype}${expectedOutput}`);
     }));
-    it('should await resources to load', SX(async function() {
-      const imgPath = '/img.png';
-      let imgResponse = null;
-      server.setRoute(imgPath, (req, res) => imgResponse = res);
-      let loaded = false;
-      const contentPromise = page.setContent(`<img src="${PREFIX + imgPath}"></img>`).then(() => loaded = true);
-      await server.waitForRequest(imgPath);
-      expect(loaded).toBe(false);
-      imgResponse.end();
-      await contentPromise;
-    }));
   });
 
   describe('Network Events', function() {
@@ -2355,13 +2510,26 @@ describe('Page', function() {
 
     it('should work with a url', SX(async function() {
       await page.goto(EMPTY_PAGE);
-      await page.addScriptTag({ url: '/injectedfile.js' });
+      const scriptHandle = await page.addScriptTag({ url: '/injectedfile.js' });
+      expect(scriptHandle.asElement()).not.toBeNull();
       expect(await page.evaluate(() => __injected)).toBe(42);
+    }));
+
+    it('should throw an error if loading from url fail', SX(async function() {
+      await page.goto(EMPTY_PAGE);
+      let error = null;
+      try {
+        await page.addScriptTag({ url: '/nonexistfile.js' });
+      } catch (e) {
+        error = e;
+      }
+      expect(error.message).toBe('Loading script from /nonexistfile.js failed');
     }));
 
     it('should work with a path', SX(async function() {
       await page.goto(EMPTY_PAGE);
-      await page.addScriptTag({ path: path.join(__dirname, 'assets/injectedfile.js') });
+      const scriptHandle = await page.addScriptTag({ path: path.join(__dirname, 'assets/injectedfile.js') });
+      expect(scriptHandle.asElement()).not.toBeNull();
       expect(await page.evaluate(() => __injected)).toBe(42);
     }));
 
@@ -2374,7 +2542,8 @@ describe('Page', function() {
 
     it('should work with content', SX(async function() {
       await page.goto(EMPTY_PAGE);
-      await page.addScriptTag({ content: 'window.__injected = 35;' });
+      const scriptHandle = await page.addScriptTag({ content: 'window.__injected = 35;' });
+      expect(scriptHandle.asElement()).not.toBeNull();
       expect(await page.evaluate(() => __injected)).toBe(35);
     }));
   });
@@ -2392,13 +2561,26 @@ describe('Page', function() {
 
     it('should work with a url', SX(async function() {
       await page.goto(EMPTY_PAGE);
-      await page.addStyleTag({ url: '/injectedstyle.css' });
+      const styleHandle = await page.addStyleTag({ url: '/injectedstyle.css' });
+      expect(styleHandle.asElement()).not.toBeNull();
       expect(await page.evaluate(`window.getComputedStyle(document.querySelector('body')).getPropertyValue('background-color')`)).toBe('rgb(255, 0, 0)');
+    }));
+
+    it('should throw an error if loading from url fail', SX(async function() {
+      await page.goto(EMPTY_PAGE);
+      let error = null;
+      try {
+        await page.addStyleTag({ url: '/nonexistfile.js' });
+      } catch (e) {
+        error = e;
+      }
+      expect(error.message).toBe('Loading style from /nonexistfile.js failed');
     }));
 
     it('should work with a path', SX(async function() {
       await page.goto(EMPTY_PAGE);
-      await page.addStyleTag({ path: path.join(__dirname, 'assets/injectedstyle.css') });
+      const styleHandle = await page.addStyleTag({ path: path.join(__dirname, 'assets/injectedstyle.css') });
+      expect(styleHandle.asElement()).not.toBeNull();
       expect(await page.evaluate(`window.getComputedStyle(document.querySelector('body')).getPropertyValue('background-color')`)).toBe('rgb(255, 0, 0)');
     }));
 
@@ -2408,12 +2590,12 @@ describe('Page', function() {
       const styleHandle = await page.$('style');
       const styleContent = await page.evaluate(style => style.innerHTML, styleHandle);
       expect(styleContent).toContain(path.join('assets', 'injectedstyle.css'));
-      styleHandle.dispose();
     }));
 
     it('should work with content', SX(async function() {
       await page.goto(EMPTY_PAGE);
-      await page.addStyleTag({ content: 'body { background-color: green; }' });
+      const styleHandle = await page.addStyleTag({ content: 'body { background-color: green; }' });
+      expect(styleHandle.asElement()).not.toBeNull();
       expect(await page.evaluate(`window.getComputedStyle(document.querySelector('body')).getPropertyValue('background-color')`)).toBe('rgb(0, 128, 0)');
     }));
   });
@@ -2485,6 +2667,14 @@ describe('Page', function() {
       await page.emulate(iPhone);
       expect(await page.evaluate(() => window.innerWidth)).toBe(375);
       expect(await page.evaluate(() => navigator.userAgent)).toContain('Safari');
+    }));
+    it('should support clicking', SX(async function() {
+      await page.emulate(iPhone);
+      await page.goto(PREFIX + '/input/button.html');
+      const button = await page.$('button');
+      await page.evaluate(button => button.style.marginTop = '200px', button);
+      await button.click();
+      expect(await page.evaluate(() => result)).toBe('Clicked');
     }));
   });
 
@@ -2712,7 +2902,6 @@ describe('Page', function() {
       expect(await page.evaluate(() => result.onInput)).toEqual(['blue']);
       expect(await page.evaluate(() => result.onChange)).toEqual(['blue']);
     }));
-
     it('should select multiple options', SX(async function() {
       await page.goto(PREFIX + '/input/select.html');
       await page.evaluate(() => makeMultiple());
@@ -2720,46 +2909,39 @@ describe('Page', function() {
       expect(await page.evaluate(() => result.onInput)).toEqual(['blue', 'green', 'red']);
       expect(await page.evaluate(() => result.onChange)).toEqual(['blue', 'green', 'red']);
     }));
-
     it('should respect event bubbling', SX(async function() {
       await page.goto(PREFIX + '/input/select.html');
       await page.select('select', 'blue');
       expect(await page.evaluate(() => result.onBubblingInput)).toEqual(['blue']);
       expect(await page.evaluate(() => result.onBubblingChange)).toEqual(['blue']);
     }));
-
     it('should throw when element is not a <select>', SX(async function() {
       let error = null;
       await page.goto(PREFIX + '/input/select.html');
       await page.select('body', '').catch(e => error = e);
       expect(error.message).toContain('Element is not a <select> element.');
     }));
-
     it('should return [] on no matched values', SX(async function() {
       await page.goto(PREFIX + '/input/select.html');
       const result = await page.select('select','42','abc');
       expect(result).toEqual([]);
     }));
-
     it('should return an array of matched values', SX(async function() {
       await page.goto(PREFIX + '/input/select.html');
       await page.evaluate(() => makeMultiple());
       const result = await page.select('select','blue','black','magenta');
       expect(result.reduce((accumulator,current) => ['blue', 'black', 'magenta'].includes(current) && accumulator, true)).toEqual(true);
     }));
-
     it('should return an array of one element when multiple is not set', SX(async function() {
       await page.goto(PREFIX + '/input/select.html');
       const result = await page.select('select','42','blue','black','magenta');
       expect(result.length).toEqual(1);
     }));
-
     it('should return [] on no values',SX(async function() {
       await page.goto(PREFIX + '/input/select.html');
       const result = await page.select('select');
       expect(result).toEqual([]);
     }));
-
     it('should deselect all options when passed no values for a multiple select',SX(async function() {
       await page.goto(PREFIX + '/input/select.html');
       await page.evaluate(() => makeMultiple());
@@ -2767,14 +2949,22 @@ describe('Page', function() {
       await page.select('select');
       expect(await page.$eval('select', select => Array.from(select.options).every(option => !option.selected))).toEqual(true);
     }));
-
     it('should deselect all options when passed no values for a select without multiple',SX(async function() {
       await page.goto(PREFIX + '/input/select.html');
       await page.select('select','blue','black','magenta');
       await page.select('select');
       expect(await page.$eval('select', select => Array.from(select.options).every(option => !option.selected))).toEqual(true);
     }));
-
+    it('should throw if passed in non-strings', SX(async function() {
+      await page.setContent('<select><option value="12"/></select>');
+      let error = null;
+      try {
+        await page.select('select', 12);
+      } catch (e) {
+        error = e;
+      }
+      expect(error.message).toContain('Values must be strings');
+    }));
   });
 
   describe('Tracing', function() {
@@ -3045,7 +3235,7 @@ describe('Page', function() {
 if (process.env.COVERAGE) {
   describe('COVERAGE', function(){
     const coverage = helper.publicAPICoverage();
-    const disabled = new Set();
+    const disabled = new Set(['page.bringToFront']);
     if (!headless)
       disabled.add('page.pdf');
 
